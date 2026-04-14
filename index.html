@@ -49,8 +49,8 @@
             </div>
         </div>
 
-        <!-- レーストラックエリア -->
-        <div class="p-3 sm:p-5 bg-black">
+        <!-- レーストラックエリア (下の余白を削減) -->
+        <div class="px-3 pt-3 pb-1 sm:px-5 sm:pt-5 sm:pb-2 bg-black">
             <div id="track" class="relative w-full h-[260px] bg-black overflow-hidden">
                 <!-- レーンの足元の線 -->
                 <div id="lane-lines-container" class="absolute inset-0 z-0"></div>
@@ -61,62 +61,22 @@
             </div>
         </div>
 
-        <!-- コントロールパネル -->
-        <div id="control-panel" class="p-6 bg-black min-h-[220px] flex flex-col items-center justify-center">
+        <!-- コントロールパネル (上の余白を削減し、要素を上に寄せる) -->
+        <div id="control-panel" class="px-6 pb-6 pt-2 bg-black min-h-[220px] flex flex-col items-center justify-start">
             <!-- JS Injection -->
         </div>
 
     </div>
 
-<script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-    import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-    import { getFirestore, doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+<script>
+    // --- 進行状況セーブ（ローカルストレージ）設定 ---
+    const SAVE_KEY = 'mouse_derby_save_data';
 
-    // --- 進行状況セーブ（クラウド保存）設定 ---
-    let db, auth;
-    let isDataLoaded = false;
-    const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-
-    async function initSaveSystem() {
+    function loadData() {
         try {
-            const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
-            if (!firebaseConfig) {
-                isDataLoaded = true;
-                updateCoinsDisplay();
-                return;
-            }
-            
-            const app = initializeApp(firebaseConfig);
-            auth = getAuth(app);
-            db = getFirestore(app);
-
-            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                await signInWithCustomToken(auth, __initial_auth_token);
-            } else {
-                await signInAnonymously(auth);
-            }
-
-            onAuthStateChanged(auth, async (user) => {
-                if (user) {
-                    await loadData(user.uid);
-                    isDataLoaded = true;
-                }
-            });
-        } catch (e) {
-            console.error("Save system init error:", e);
-            isDataLoaded = true;
-            updateCoinsDisplay();
-        }
-    }
-
-    async function loadData(uid) {
-        if (!db) return;
-        try {
-            const docRef = doc(db, 'artifacts', appId, 'users', uid, 'gameData', 'saveData');
-            const docSnap = await getDoc(docRef);
-            if (docSnap.exists()) {
-                const data = docSnap.data();
+            const saved = localStorage.getItem(SAVE_KEY);
+            if (saved) {
+                const data = JSON.parse(saved);
                 if (typeof data.coins === 'number') {
                     coins = data.coins;
                     if (betAmount > coins) betAmount = Math.max(10, coins); // ベット額を所持金に合わせて調整
@@ -126,14 +86,11 @@
             console.error("Load error:", e);
         }
         updateCoinsDisplay();
-        if (state === 'BETTING') renderControls();
     }
 
-    async function saveData() {
-        if (!isDataLoaded || !db || !auth || !auth.currentUser) return;
+    function saveData() {
         try {
-            const docRef = doc(db, 'artifacts', appId, 'users', auth.currentUser.uid, 'gameData', 'saveData');
-            await setDoc(docRef, { coins: coins }, { merge: true });
+            localStorage.setItem(SAVE_KEY, JSON.stringify({ coins: coins }));
         } catch (e) {
             console.error("Save error:", e);
         }
@@ -162,7 +119,7 @@
 
     // --- 初期化 ---
     function init() {
-        initSaveSystem();
+        loadData(); // ローカルストレージからデータ読み込み
         
         const img = new Image();
         img.onload = () => { isImageLoaded = true; setupMouses(); generateOdds(); renderControls(); };
@@ -379,10 +336,11 @@
         panel.innerHTML = '';
 
         if (state === 'BETTING') {
+            // 要素間のマージン(mb-*)も少し減らして密集感を出す
             panel.innerHTML = `
-                <h2 class="text-lg sm:text-xl mb-4 text-white">ヨソウ シテ クダサイ</h2>
-                <div id="mouses-grid" class="flex flex-wrap justify-center gap-2 sm:gap-3 mb-6 w-full max-w-lg"></div>
-                <div class="flex items-center gap-4 mb-6 bg-gray-900 p-2 sm:p-3">
+                <h2 class="text-lg sm:text-xl mb-3 text-white">ヨソウ シテ クダサイ</h2>
+                <div id="mouses-grid" class="flex flex-wrap justify-center gap-2 sm:gap-3 mb-4 w-full max-w-lg"></div>
+                <div class="flex items-center gap-4 mb-4 bg-gray-900 p-2 sm:p-3">
                     <button id="btn-dec" class="w-10 h-10 bg-gray-800 hover:bg-gray-700 text-xl text-white">-</button>
                     <span class="text-lg sm:text-xl min-w-[100px] text-center">${betAmount} COIN</span>
                     <button id="btn-inc" class="w-10 h-10 bg-gray-800 hover:bg-gray-700 text-xl text-white">+</button>
@@ -413,7 +371,7 @@
 
         } else if (state === 'RACING') {
             panel.innerHTML = `
-                <h2 class="text-xl sm:text-2xl mb-4 text-white animate-pulse">RACING...</h2>
+                <h2 class="text-xl sm:text-2xl mb-4 text-white animate-pulse mt-4">RACING...</h2>
                 <p class="text-lg text-gray-400 mt-2">オウエンチュウ: <span class="${textColors[betMouseId]}">${mouseNames[betMouseId]}</span></p>
             `;
         }
@@ -432,13 +390,13 @@
         }
 
         panel.innerHTML = `
-            <h2 class="text-2xl sm:text-3xl mb-2 ${isWin ? 'text-yellow-400' : 'text-gray-500'}">
+            <h2 class="text-2xl sm:text-3xl mb-2 mt-4 ${isWin ? 'text-yellow-400' : 'text-gray-500'}">
                 ${isWin ? 'YOU WIN!!' : 'YOU LOSE...'}
             </h2>
             <p class="text-lg sm:text-xl mb-4 text-white">
                 1チャク: <span class="${textColors[winner.id]}">${mouseNames[winner.id]}</span>
             </p>
-            ${isWin ? `<div class="text-xl text-yellow-400 mb-6">+${prize} COIN (x${mouses[betMouseId].odds.toFixed(1)})</div>` : '<div class="h-8 mb-6"></div>'}
+            ${isWin ? `<div class="text-xl text-yellow-400 mb-4">+${prize} COIN (x${mouses[betMouseId].odds.toFixed(1)})</div>` : '<div class="h-8 mb-4"></div>'}
             <div id="next-action"></div>
         `;
 
