@@ -37,38 +37,28 @@
 </head>
 <body class="py-4 px-2 sm:py-8 sm:px-4 flex justify-center items-start min-h-screen relative">
 
-    <!-- ゲーム全体コンテナ -->
     <div id="app" class="w-full max-w-2xl bg-black overflow-hidden relative">
         
-        <!-- コイン表示 (右上) -->
         <div class="absolute top-4 right-4 z-20 flex items-center gap-2 bg-black/80 px-3 py-1 rounded">
             <span class="text-gray-400 text-[10px] sm:text-xs">COIN:</span>
             <span id="coin-display" class="text-sm sm:text-base text-yellow-400">---</span>
         </div>
 
-        <!-- レーストラックエリア -->
         <div class="pt-12 pb-2 px-3 sm:px-5 bg-black">
             <div id="track" class="relative w-full h-[260px] bg-black overflow-hidden">
-                <!-- レーンの足元の線 -->
                 <div id="lane-lines-container" class="absolute inset-0 z-0"></div>
-                <!-- チーズコンテナ -->
                 <div id="cheese-container" class="absolute right-[10%] top-0 bottom-0 w-[16px] z-0"></div>
-                <!-- ネズミコンテナ -->
                 <div id="mouses-container" class="absolute inset-0 z-10"></div>
             </div>
         </div>
 
-        <!-- コントロールパネル -->
         <div id="control-panel" class="p-6 bg-black min-h-[200px] flex flex-col items-center justify-center">
-            <!-- JS Injection -->
-        </div>
+            </div>
 
     </div>
 
-    <!-- 偽広告モーダル -->
     <div id="ad-modal" class="fixed inset-0 z-50 hidden bg-black/95 flex flex-col items-center justify-center p-4">
         <div class="relative w-full max-w-sm flex flex-col items-center">
-            <!-- 広告画像と右上のカウントダウン -->
             <div class="relative flex justify-center w-full">
                 <img src="mouse_cm.jpeg" alt="AD" class="max-w-full max-h-[60vh] object-contain border-2 border-gray-700 rounded-sm shadow-[0_0_20px_rgba(0,0,0,0.8)]">
                 <div id="ad-timer" class="absolute top-2 right-2 bg-black/80 text-white text-[10px] px-2 py-1 rounded tracking-widest border border-gray-500">
@@ -244,7 +234,8 @@
                 odds: 2.0,
                 speedProfile: {},
                 returnSpeed: 0,
-                accidentTimer: 0 
+                accidentTimer: 0,
+                hasDebuff: false // ★追加: デバフ状態のフラグ
             });
 
             const el = document.createElement('div');
@@ -371,7 +362,16 @@
             m.frame = 0;
             m.accidentTimer = 0; 
             m.speedProfile.isSuperAwakening = false;
+            m.hasDebuff = false; // ★追加: 初期化
         });
+
+       if (mouses[betMouseId].speedProfile.isFavorite) {
+            // 自分が賭けたネズミが本命であれば、15%の確率でデバフ付与
+            if (Math.random() < 0.15) {
+                mouses[betMouseId].hasDebuff = true;
+            }
+        }
+
         renderControls();
         updateMouseStyles();
 
@@ -414,8 +414,8 @@
                         speed += fluctuation;
 
                         if (mouse.speedProfile.isFavorite) {
-                            if (mouse.accidentTimer <= 0 && Math.random() < 0.001) {
-                                mouse.accidentTimer = 40; 
+                            if (mouse.accidentTimer <= 0 && Math.random() < 0.0004) {
+                                mouse.accidentTimer = 30; 
                             }
                         }
 
@@ -426,6 +426,11 @@
                             if (Math.random() < 0.01) {
                                 speed -= 0.3; 
                             }
+                        }
+
+                        // ★追加: デバフがかかっている場合、最終的な速度を0.85倍（1.5割減）にする
+                        if (mouse.hasDebuff) {
+                            speed *= 0.85;
                         }
 
                         if (speed < 0.1) speed = 0.1;
@@ -639,6 +644,7 @@
             m.returnSpeed = Math.random() * 0.4 + 0.6; 
             m.accidentTimer = 0;
             m.speedProfile.isSuperAwakening = false;
+            m.hasDebuff = false; // ★追加: 初期化
         });
         
         generateOdds(); 
