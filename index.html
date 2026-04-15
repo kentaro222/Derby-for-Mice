@@ -348,9 +348,9 @@
                     // ゴール判定
                     if (mouse.x >= goalX) {
                         mouse.x = goalX;
+                        // はじめてゴールしたネズミを勝者として記録
                         if (!winner) {
                             winner = mouse;
-                            showResult(winner);
                         }
                     }
                 }
@@ -370,8 +370,10 @@
                 animationTimer = 0;
             }
 
+            // 全員がゴールラインに到達したらリザルト画面へ
             if (allFinished) {
                 state = 'FINISHED'; 
+                showResult(winner);
             }
 
         } else if (state === 'BETTING') {
@@ -451,7 +453,7 @@
         } else if (state === 'READY') {
             panel.innerHTML = `<h2 class="text-2xl text-white animate-bounce tracking-widest mt-4">READY...</h2>`;
 
-        } else if (state === 'RACING' && !winner) {
+        } else if (state === 'RACING') {
             panel.innerHTML = `
                 <h2 class="text-xl text-gray-500 mb-4 animate-pulse tracking-widest">RACING...</h2>
                 <div class="flex items-center gap-3">
@@ -507,8 +509,8 @@
         if (betAmount < 10 && coins >= 10) betAmount = 10;
         
         mouses.forEach(m => {
-            // ゆっくりランダムな速度で戻る
-            m.returnSpeed = Math.random() * 0.4 + 0.2; 
+            // ゆっくりランダムな速度で戻る (最低速度を少し引き上げ)
+            m.returnSpeed = Math.random() * 0.4 + 0.6; 
         });
         
         generateOdds(); 
