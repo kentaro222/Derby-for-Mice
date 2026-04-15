@@ -251,14 +251,19 @@
         });
 
         mouses.forEach(m => {
-            let houseEdge = m.power > 70 ? 0.60 : (m.power < 40 ? 0.85 : 0.70);
+            // 還元率を全体で一律80%に設定し、大穴だけが得する状態を解消
+            let houseEdge = 0.8; 
             let rawOdds = (totalPower / m.power) * houseEdge; 
             m.odds = Math.max(1.1, Math.round(rawOdds * 10) / 10);
             
+            // スピードのバランス調整
             m.speedProfile = {
-                base: (m.power / 100) * 0.08 + 0.4, 
-                spurt: ((100 - m.power) / 100) * 1.8 + 0.2, 
-                spurtChance: ((100 - m.power) / 100) * 0.08 + 0.01
+                // 本命(パワー高)の基礎速度を明確に速くする
+                base: (m.power / 100) * 0.25 + 0.25, 
+                // スパートの威力を控えめに（大穴でも一気に抜き去ることは少なくする）
+                spurt: ((100 - m.power) / 100) * 0.8 + 0.2, 
+                // スパート確率の差を縮める
+                spurtChance: 0.015 + ((100 - m.power) / 100) * 0.02
             };
         });
     }
@@ -340,9 +345,11 @@
                         speed += mouse.speedProfile.spurt;
                     }
                     
-                    speed += (Math.random() - 0.5) * 0.5;
+                    // 毎フレームの揺らぎを抑え、基本は能力通りに走らせる
+                    speed += (Math.random() - 0.5) * 0.3;
 
-                    if (Math.random() < 0.02) {
+                    // 1.5%の確率で誰でもサボる(大きく減速) -> これが波乱を生む
+                    if (Math.random() < 0.015) {
                         speed -= 0.4;
                     }
 
@@ -421,7 +428,6 @@
             const btnText = isReturning ? 'WAIT...' : 'START';
 
             panel.innerHTML = `
-                <!-- 修正点: スマホでは3列グリッド、PCでは1行flexで中央揃えになるようにレイアウト -->
                 <div id="mouses-grid" class="grid grid-cols-3 sm:flex sm:justify-center justify-items-center gap-2 sm:gap-3 mb-6 w-full max-w-xl mx-auto"></div>
                 <div class="flex items-center gap-4 mb-6">
                     <button id="btn-dec" class="w-10 h-10 bg-gray-900 hover:bg-gray-800 text-xl text-white flex justify-center items-center rounded">-</button>
