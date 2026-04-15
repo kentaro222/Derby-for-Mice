@@ -217,7 +217,8 @@
                 power: 50,
                 odds: 2.0,
                 speedProfile: {},
-                returnSpeed: 0
+                returnSpeed: 0,
+                accidentTimer: 0 // アクシデント発生時の停止タイマー
             });
 
             const el = document.createElement('div');
@@ -287,10 +288,24 @@
                 spurt: ((100 - m.power) / 100) * 0.8 + 0.2, 
                 // スパート確率の差
                 spurtChance: 0.015 + ((100 - m.power) / 100) * 0.02,
-                // 本命グループは速度のブレを大きくして競り合いを激しくする
-                fluctuation: isFavorite ? 0.65 : 0.25
+                // ゆらぎの幅（大穴も少しベースの揺らぎを持たせる）
+                fluctuation: isFavorite ? 0.65 : 0.35,
+                // 判定用フラグ
+                isFavorite: isFavorite,
+                // 超加速用のフラグ
+                isSuperAwakeningCandidate: false,
+                isSuperAwakening: false
             };
         });
+
+        // 約6〜7レースに1回（15%）の確率で、大穴（高オッズ組）のどれかが後半で超加速するイベントを仕込む
+        if (Math.random() < 0.15) {
+            let underdogs = mouses.filter(m => !m.speedProfile.isFavorite);
+            if (underdogs.length > 0) {
+                let chosen = underdogs[Math.floor(Math.random() * underdogs.length)];
+                chosen.speedProfile.isSuperAwakeningCandidate = true;
+            }
+        }
     }
 
     function updateMouseStyles() {
@@ -342,6 +357,7 @@
         mouses.forEach(m => {
             m.x = 10;
             m.frame = 0;
+            m.accidentTimer = 0; // アクシデント状態をリセット
         });
         renderControls();
         updateMouseStyles();
@@ -366,19 +382,49 @@
                     allFinished = false;
                     let speed = mouse.speedProfile.base;
                     
-                    if (Math.random() < mouse.speedProfile.spurtChance) {
-                        speed += mouse.speedProfile.spurt;
-                    }
-                    
-                    // 毎フレームの揺らぎ（本命ほど大きくブレて競り合う）
-                    speed += (Math.random() - 0.5) * mouse.speedProfile.fluctuation;
-
-                    // 1.5%の確率で誰でもサボる(大きく減速)
-                    if (Math.random() < 0.015) {
-                        speed -= 0.4;
+                    // コースの3/5 (60%) を過ぎたところで超加速発動
+                    if (mouse.speedProfile.isSuperAwakeningCandidate && !mouse.speedProfile.isSuperAwakening && mouse.x > goalX * 0.6) {
+                        mouse.speedProfile.isSuperAwakening = true;
                     }
 
-                    if (speed < 0.1) speed = 0.1;
+                    if (mouse.speedProfile.isSuperAwakening) {
+                        // 超加速状態（通常の数倍の速度でぶっちぎる）
+                        speed = 3.0;
+                    } else {
+                        if (Math.random() < mouse.speedProfile.spurtChance) {
+                            speed += mouse.speedProfile.spurt;
+                        }
+                        
+                        // ランダムな揺らぎの計算
+                        let fluctuation = (Math.random() - 0.5) * mouse.speedProfile.fluctuation;
+                        
+                        // 高オッズ（大穴）はランダムの上振れ（プラス方向）を2倍に拡張
+                        if (!mouse.speedProfile.isFavorite && fluctuation > 0) {
+                            fluctuation *= 2.0; 
+                        }
+                        speed += fluctuation;
+
+                        // 低オッズ（本命）限定で、ごく稀に大幅減速するアクシデントを発生
+                        if (mouse.speedProfile.isFavorite) {
+                            // 約0.1%の確率で発生（発生率を少し下げる）
+                            if (mouse.accidentTimer <= 0 && Math.random() < 0.001) {
+                                mouse.accidentTimer = 40; // 約40フレームもたつく
+                            }
+                        }
+
+                        // アクシデント中の速度処理
+                        if (mouse.accidentTimer > 0) {
+                            speed = 0.02; // 極端に遅くなる（ほぼ停止）
+                            mouse.accidentTimer -= delta / 16;
+                        } else {
+                            // 全員共通の通常の小さなサボり
+                            if (Math.random() < 0.01) {
+                                speed -= 0.3;
+                            }
+                        }
+
+                        if (speed < 0.1) speed = 0.1;
+                    }
 
                     const safeDelta = Math.min(delta, 32); 
                     mouse.x += speed * (safeDelta / 16);
@@ -397,7 +443,12 @@
                 animIndex = (animIndex + 1) % animSeq.length;
                 mouses.forEach(mouse => {
                     if (mouse.x < goalX) {
-                        mouse.frame = animSeq[animIndex];
+                        // アクシデント中は足を止めてもがいているように見せる
+                        if (mouse.accidentTimer > 0) {
+                            mouse.frame = 0; 
+                        } else {
+                            mouse.frame = animSeq[animIndex];
+                        }
                     } else {
                         mouse.frame = 0; 
                     }
@@ -541,6 +592,7 @@
         
         mouses.forEach(m => {
             m.returnSpeed = Math.random() * 0.4 + 0.6; 
+            m.accidentTimer = 0; // リセット
         });
         
         generateOdds(); 
