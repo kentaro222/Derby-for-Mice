@@ -245,25 +245,50 @@
 
     function generateOdds() {
         let totalPower = 0;
-        mouses.forEach(m => {
-            m.power = Math.floor(Math.random() * 80) + 20;
+        
+        // 毎回、3〜4匹を「本命（低オッズ）グループ」にする
+        const numFavorites = Math.floor(Math.random() * 2) + 3;
+        
+        // どのネズミを本命にするかシャッフルで決める
+        let indices = [0, 1, 2, 3, 4, 5];
+        for (let i = indices.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [indices[i], indices[j]] = [indices[j], indices[i]];
+        }
+
+        // 今回のレースの本命の強さ基準（70〜90）
+        const baseFavoritePower = Math.floor(Math.random() * 21) + 70;
+
+        indices.forEach((mouseIndex, i) => {
+            let m = mouses[mouseIndex];
+            if (i < numFavorites) {
+                // 本命グループ：基準値に近しいパワー（僅差にする）
+                m.power = baseFavoritePower + (Math.floor(Math.random() * 11) - 5);
+            } else {
+                // 大穴グループ：パワーを低く設定（20〜50）
+                m.power = Math.floor(Math.random() * 31) + 20;
+            }
             totalPower += m.power;
         });
 
         mouses.forEach(m => {
-            // 還元率を全体で一律80%に設定し、大穴だけが得する状態を解消
+            // 還元率を全体で一律80%に設定
             let houseEdge = 0.8; 
             let rawOdds = (totalPower / m.power) * houseEdge; 
             m.odds = Math.max(1.1, Math.round(rawOdds * 10) / 10);
             
+            let isFavorite = m.power >= 60; // 本命グループかどうかの判定
+
             // スピードのバランス調整
             m.speedProfile = {
-                // 本命(パワー高)の基礎速度を明確に速くする
+                // 本命(パワー高)の基礎速度を速くする
                 base: (m.power / 100) * 0.25 + 0.25, 
-                // スパートの威力を控えめに（大穴でも一気に抜き去ることは少なくする）
+                // スパートの威力を控えめに
                 spurt: ((100 - m.power) / 100) * 0.8 + 0.2, 
-                // スパート確率の差を縮める
-                spurtChance: 0.015 + ((100 - m.power) / 100) * 0.02
+                // スパート確率の差
+                spurtChance: 0.015 + ((100 - m.power) / 100) * 0.02,
+                // 本命グループは速度のブレを大きくして競り合いを激しくする
+                fluctuation: isFavorite ? 0.65 : 0.25
             };
         });
     }
@@ -345,10 +370,10 @@
                         speed += mouse.speedProfile.spurt;
                     }
                     
-                    // 毎フレームの揺らぎを抑え、基本は能力通りに走らせる
-                    speed += (Math.random() - 0.5) * 0.3;
+                    // 毎フレームの揺らぎ（本命ほど大きくブレて競り合う）
+                    speed += (Math.random() - 0.5) * mouse.speedProfile.fluctuation;
 
-                    // 1.5%の確率で誰でもサボる(大きく減速) -> これが波乱を生む
+                    // 1.5%の確率で誰でもサボる(大きく減速)
                     if (Math.random() < 0.015) {
                         speed -= 0.4;
                     }
