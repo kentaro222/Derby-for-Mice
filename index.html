@@ -152,7 +152,7 @@
     let isImageLoaded = true;
     let loopStarted = false;
     let winner = null;
-    let isReturning = false; // ネズミがスタート位置に戻っている最中かどうかのフラグ
+    let isReturning = false;
     
     const animSeq = [0, 1, 0, 2];
     let animIndex = 0;
@@ -251,13 +251,18 @@
         });
 
         mouses.forEach(m => {
-            let rawOdds = (totalPower / m.power) * 0.75; 
-            m.odds = Math.max(1.2, Math.round(rawOdds * 10) / 10);
+            // 本命(高パワー)は控除率を高く(0.6)、大穴(低パワー)は甘く(0.85)して期待値を調整
+            let houseEdge = m.power > 70 ? 0.60 : (m.power < 40 ? 0.85 : 0.70);
+            let rawOdds = (totalPower / m.power) * houseEdge; 
+            m.odds = Math.max(1.1, Math.round(rawOdds * 10) / 10);
             
             m.speedProfile = {
-                base: (m.power / 100) * 0.25 + 0.4, 
-                spurt: ((100 - m.power) / 100) * 1.2 + 0.2, 
-                spurtChance: Math.random() * 0.06 + 0.02
+                // ベーススピードの差をかなり縮め、全体的に遅めにする (0.4 ~ 0.48)
+                base: (m.power / 100) * 0.08 + 0.4, 
+                // 大穴ほどスパート時の爆発力が極端に高くなる
+                spurt: ((100 - m.power) / 100) * 1.8 + 0.2, 
+                // 大穴ほどスパートが出やすい
+                spurtChance: ((100 - m.power) / 100) * 0.08 + 0.01
             };
         });
     }
@@ -269,7 +274,6 @@
                 el.style.transform = `translateX(${mouse.x}px)`;
             }
             
-            // 状態によって向き（左右反転）を切り替え
             const scaleStr = (state === 'BETTING' && mouse.x > 10) ? 'scale(-3, 3)' : 'scale(3, 3)';
 
             if(isImageLoaded) {
@@ -324,7 +328,6 @@
         renderControls();
     }
 
-    // --- メインアニメーションループ ---
     function gameLoop(timestamp) {
         const delta = timestamp - lastTime;
         lastTime = timestamp;
@@ -337,18 +340,27 @@
                     allFinished = false;
                     let speed = mouse.speedProfile.base;
                     
+                    // スパート判定
                     if (Math.random() < mouse.speedProfile.spurtChance) {
                         speed += mouse.speedProfile.spurt;
                     }
-                    speed += (Math.random() - 0.5) * 0.4;
+                    
+                    // 毎フレームの揺らぎを大きくして荒れやすくする
+                    speed += (Math.random() - 0.5) * 0.5;
+
+                    // サボり（減速）判定：2%の確率で大きくスピードダウン
+                    if (Math.random() < 0.02) {
+                        speed -= 0.4;
+                    }
+
+                    // 最低速度保証（後ろに下がらないように）
+                    if (speed < 0.1) speed = 0.1;
 
                     const safeDelta = Math.min(delta, 32); 
                     mouse.x += speed * (safeDelta / 16);
 
-                    // ゴール判定
                     if (mouse.x >= goalX) {
                         mouse.x = goalX;
-                        // はじめてゴールしたネズミを勝者として記録
                         if (!winner) {
                             winner = mouse;
                         }
@@ -356,7 +368,6 @@
                 }
             });
 
-            // 走るアニメーション
             animationTimer += delta;
             if (animationTimer > 100) {
                 animIndex = (animIndex + 1) % animSeq.length;
@@ -364,20 +375,18 @@
                     if (mouse.x < goalX) {
                         mouse.frame = animSeq[animIndex];
                     } else {
-                        mouse.frame = 0; // ゴールしたら待機
+                        mouse.frame = 0; 
                     }
                 });
                 animationTimer = 0;
             }
 
-            // 全員がゴールラインに到達したらリザルト画面へ
             if (allFinished) {
                 state = 'FINISHED'; 
                 showResult(winner);
             }
 
         } else if (state === 'BETTING') {
-            // ゴールからスタートラインへ戻る処理
             let isMoving = false;
             mouses.forEach(mouse => {
                 if (mouse.x > 10) {
@@ -403,7 +412,6 @@
                     animationTimer = 0;
                 }
             } else if (isReturning) {
-                // 全員戻りきったタイミングでSTARTボタンを有効化
                 isReturning = false;
                 renderControls();
             }
@@ -437,7 +445,6 @@
                 const btn = document.createElement('button');
                 const isSelected = betMouseId === i;
                 btn.className = `px-3 py-2 w-20 flex flex-col items-center justify-center gap-2 rounded transition-all ${isSelected ? 'bg-gray-800 border border-gray-600 scale-105' : 'bg-transparent hover:bg-gray-900'}`;
-                // 色名の代わりに■だけを表示
                 btn.innerHTML = `
                     <span class="inline-block w-5 h-5 ${badgeColors[i]} rounded-sm"></span>
                     <span class="text-sm text-yellow-400">x${m.odds.toFixed(1)}</span>
@@ -503,13 +510,12 @@
 
     function resetRace() {
         state = 'BETTING';
-        isReturning = true; // ネズミたちが戻り始める
+        isReturning = true;
 
         if (betAmount > coins) betAmount = coins;
         if (betAmount < 10 && coins >= 10) betAmount = 10;
         
         mouses.forEach(m => {
-            // ゆっくりランダムな速度で戻る (最低速度を少し引き上げ)
             m.returnSpeed = Math.random() * 0.4 + 0.6; 
         });
         
