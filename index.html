@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ネズミダービー</title>
+    <title>Derby for Mice</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
@@ -644,7 +644,7 @@
                 clearInterval(adInterval);
                 adTimerContainer.classList.add('hidden');
                 closeBtn.disabled = false;
-                closeBtn.innerText = "CLOSE & GET 50 COIN";
+                closeBtn.innerText = "CLOSE & GET 100 COIN";
                 closeBtn.className = "mt-4 w-full py-4 bg-yellow-500 text-black text-[10px] sm:text-xs rounded-sm cursor-pointer tracking-widest hover:bg-yellow-400 transition-all duration-300 hover:scale-[1.02]";
             }
         }, 1000);
@@ -652,7 +652,7 @@
         closeBtn.onclick = () => {
             if (timeLeft <= 0) {
                 modal.classList.add('hidden');
-                coins = 50;
+                coins = 100;
                 betAmount = 10;
                 updateCoins();
                 resetRace();
