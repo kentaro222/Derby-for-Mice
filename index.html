@@ -449,6 +449,11 @@
         const delta = timestamp - lastTime;
         lastTime = timestamp;
 
+        // ★追加: 基準となるHTC Desire 22 proのゴール位置(約260px)から速度倍率を計算
+        // (初回ロード時など、goalXが0の場合のフェイルセーフも含む)
+        const currentGoalX = goalX > 0 ? goalX : (document.getElementById('track').clientWidth * 0.90 - 48);
+        const speedMultiplier = currentGoalX / 260;
+
         if (state === 'RACING') {
             let allFinished = true;
 
@@ -493,15 +498,16 @@
                     }
 
                     const safeDelta = Math.min(delta, 32); 
-                    mouse.x += speed * (safeDelta / 16);
+                    // ★変更: speedにspeedMultiplierを掛けて画面サイズに連動させる
+                    mouse.x += (speed * speedMultiplier) * (safeDelta / 16);
 
-                    // ★ゴール判定と終了シーケンスへの移行
+                    // ゴール判定
                     if (mouse.x >= goalX) {
                         mouse.x = goalX;
                         if (!winner) {
                             winner = mouse;
                             spawnParticles(mouse.x, mouse.y, 'goal'); 
-                            isRaceEnding = true; // ★1着がゴールしたので終了タイマー開始
+                            isRaceEnding = true; 
                         }
                     }
                 }
@@ -524,7 +530,6 @@
                 animationTimer = 0;
             }
 
-            // ★1着ゴールから4秒経過、もしくは全員ゴールでリザルト画面へ強制移行
             if (isRaceEnding) {
                 raceEndTimer += delta;
             }
@@ -540,7 +545,8 @@
                 if (mouse.x > 10) {
                     isMoving = true;
                     const safeDelta = Math.min(delta, 32);
-                    mouse.x -= mouse.returnSpeed * (safeDelta / 16);
+                    // ★変更: レース後のスタート地点へ戻る速度にも倍率を掛ける
+                    mouse.x -= (mouse.returnSpeed * speedMultiplier) * (safeDelta / 16);
                     if (mouse.x <= 10) {
                         mouse.x = 10;
                         mouse.frame = 0; 
