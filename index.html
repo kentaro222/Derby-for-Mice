@@ -274,53 +274,26 @@
     }
 
     function setupRaceParams() {
-        // 1. まず全員の基本ステータスを初期化
+        // 1レース全体で起きる転倒の「上限回数」を設定 (1回か2回)
+        mouses.maxTrips = Math.random() < 0.5 ? 1 : 2;
+        mouses.currentTrips = 0; 
+        
+        // ★ 追加：先頭が90%を越えた時の「1回限りのスパート判定」が終わったかどうかのフラグ
+        mouses.spurtEvaluated = false; 
+
         mouses.forEach(m => {
+            // スパート枠を事前決定しないので、基本速度は全員通常通りバラけさせる
             const baseSpeed = 0.2 + Math.random() * 0.5; 
 
             m.speedProfile = {
                 base: baseSpeed, 
                 fluctuation: 0.5 + Math.random() * 1.0, 
-                
-                isTripper: false,
-                tripPercent: 0,
                 hasTripped: false, 
-
+                
                 isLateCharger: false,
-                chargePercent: 0,
                 hasCharged: false
             };
         });
-
-        // 2. 転倒枠の設定（1レースにつき 0〜2匹）
-        // 足の速いマウス（baseSpeedが0.45以上）だけを抽出してシャッフル
-        let fastMice = mouses.filter(m => m.speedProfile.base > 0.45);
-        fastMice.sort(() => Math.random() - 0.5);
-        
-        const numTrippers = Math.floor(Math.random() * 3); // 0, 1, または 2
-        const actualTrippers = Math.min(numTrippers, fastMice.length);
-
-        for (let i = 0; i < actualTrippers; i++) {
-            fastMice[i].speedProfile.isTripper = true;
-            // コケる位置はコースの30%〜80%の間でランダム
-            fastMice[i].speedProfile.tripPercent = 0.3 + Math.random() * 0.5; 
-        }
-
-        // 3. スパート枠の設定（1レースにつき 最大1匹、50%の確率で出現）
-        if (Math.random() < 0.50) {
-            // 転倒枠に選ばれていないマウスの中から1匹選ぶ
-            let eligibleMice = mouses.filter(m => !m.speedProfile.isTripper);
-            
-            if (eligibleMice.length > 0) {
-                const chosenIndex = Math.floor(Math.random() * eligibleMice.length);
-                const m = eligibleMice[chosenIndex];
-
-                // スパートの演出を活かすため、基本スピードをわざと遅め（0.25〜0.35）に固定
-                m.speedProfile.base = 0.25 + Math.random() * 0.1;
-                m.speedProfile.isLateCharger = true;
-                m.speedProfile.chargePercent = 0.60 + Math.random() * 0.25; 
-            }
-        }
     }
 
     function updateMouseStyles() {
@@ -466,12 +439,43 @@
         const delta = timestamp - lastTime;
         lastTime = timestamp;
 
-        // 基準となるHTC Desire 22 proのゴール位置(約260px)から速度倍率を計算
         const currentGoalX = goalX > 0 ? goalX : (document.getElementById('track').clientWidth * 0.90 - 48);
         const speedMultiplier = currentGoalX / 260;
 
         if (state === 'RACING') {
             let allFinished = true;
+            
+            // 現在の「先頭（1位）のマウス」を特定する
+            let leader = null;
+            let maxX = -1;
+            mouses.forEach(m => {
+                if (m.x < goalX && m.x > maxX && m.tripTimer <= 0) {
+                    maxX = m.x;
+                    leader = m;
+                }
+            });
+
+            // 先頭の進捗（0.0 〜 1.0）
+            const leaderProgress = leader ? (leader.x / goalX) : 0;
+
+            // ★ 新ロジック：先頭が90%を越えた瞬間に、1回だけスパート判定を行う！
+            if (leaderProgress >= 0.90 && !mouses.spurtEvaluated) {
+                mouses.spurtEvaluated = true; // 判定済みにロック（これ以降は判定しない）
+
+                // 25%の確率で、誰かが怒涛の追い上げを開始する！
+                if (Math.random() < 0.25) {
+                    // 先頭以外で、今コケていないマウスたちを候補にする
+                    let candidates = mouses.filter(m => m !== leader && m.tripTimer <= 0 && !m.speedProfile.hasTripped);
+                    
+                    if (candidates.length > 0) {
+                        // ランダムに1匹選んで即座にスパート発動！
+                        let chosen = candidates[Math.floor(Math.random() * candidates.length)];
+                        chosen.speedProfile.isLateCharger = true;
+                        chosen.speedProfile.hasCharged = true; 
+                        spawnParticles(chosen.x, chosen.y, 'awaken'); 
+                    }
+                }
+            }
 
             mouses.forEach(mouse => {
                 if (mouse.x < goalX) {
@@ -479,25 +483,29 @@
                     let speed = mouse.speedProfile.base;
                     let progress = mouse.x / goalX; 
 
-                    // 転倒の判定
-                    if (mouse.speedProfile.isTripper && progress > mouse.speedProfile.tripPercent && !mouse.speedProfile.hasTripped) {
-                        mouse.speedProfile.hasTripped = true;
-                        mouse.tripTimer = 100; // ★ココを変更！(元は 40) 約1.6秒間完全に気絶します
-                        spawnParticles(mouse.x, mouse.y, 'trip');
-                    }
-                    // スパート発動の瞬間！
-                    if (mouse.speedProfile.isLateCharger && progress > mouse.speedProfile.chargePercent && !mouse.speedProfile.hasCharged) {
-                        mouse.speedProfile.hasCharged = true;
-                        // 超覚醒のキラキラエフェクトをスパート発動用に流用して派手に！
-                        spawnParticles(mouse.x, mouse.y, 'awaken'); 
+                    // 転倒ロジック：自分が先頭の時だけ低確率でコケる
+                    if (mouse === leader && 
+                        progress > 0.30 && progress < 0.85 && 
+                        mouses.currentTrips < mouses.maxTrips && 
+                        !mouse.speedProfile.hasTripped && 
+                        !mouse.speedProfile.isLateCharger) {
+                        
+                        if (Math.random() < 0.008) {
+                            mouse.speedProfile.hasTripped = true;
+                            mouses.currentTrips++;
+                            // 2匹に抜かれる程度の停止時間
+                            mouse.tripTimer = 50 + Math.random() * 20; 
+                            spawnParticles(mouse.x, mouse.y, 'trip');
+                        }
                     }
 
-                    // 速度の決定（超覚醒を削除してスッキリ）
+                    // 速度計算
                     if (mouse.tripTimer > 0) {
                         speed = 0; 
                         mouse.tripTimer -= delta / 16;
                     } else if (mouse.speedProfile.hasCharged) {
-                        speed = 2.1; // ★ スパート中のトップスピードを2.1にアップ！
+                        // ★ 発動が遅くなった分、逆転できるようにスピードを 2.1 → 3.0 にアップ！
+                        speed = 3.0; 
                     } else {
                         let fluctuation = (Math.random() - 0.5) * mouse.speedProfile.fluctuation;
                         speed += fluctuation;
@@ -505,16 +513,13 @@
                     
                     if (speed < 0.1 && mouse.tripTimer <= 0) speed = 0.1;
 
-                    // 土煙エフェクト
                     if (speed >= 1.8 && Math.random() < 0.4 && mouse.tripTimer <= 0) {
                         spawnParticles(mouse.x, mouse.y, 'dash');
                     }
 
                     const safeDelta = Math.min(delta, 32); 
-                    // 画面サイズに連動させた速度を適用
                     mouse.x += (speed * speedMultiplier) * (safeDelta / 16);
 
-                    // ゴール判定
                     if (mouse.x >= goalX) {
                         mouse.x = goalX;
                         if (!winner) {
