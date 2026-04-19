@@ -277,12 +277,12 @@
         mouses.forEach(m => {
             const baseSpeed = 0.2 + Math.random() * 0.5; 
             
+            // 転倒する確率（速いマウスの60%）はそのまま
             const isTripper = baseSpeed > 0.5 && Math.random() < 0.6;
             const tripPercent = 0.4 + Math.random() * 0.4; 
             
-            const isLateCharger = baseSpeed < 0.4 && Math.random() < 0.6;
-            // ★変更箇所(案A): スパートの発動位置を 40%〜65% の間に前倒し
-            // (元は 0.5 + Math.random() * 0.3)
+            // ★変更箇所：スパート持ちになる確率を 60% → 25% に大幅ダウン
+            const isLateCharger = baseSpeed < 0.4 && Math.random() < 0.25;
             const chargePercent = 0.4 + Math.random() * 0.25; 
 
             m.speedProfile = {
@@ -302,9 +302,8 @@
             };
         });
 
-        // ★変更箇所(案C): 超覚醒の発生確率を 5% から 15% に大幅アップ！
-        // (元は 0.05)
-        if (Math.random() < 0.15) {
+        // ★変更箇所：超覚醒の確率を 15% → 8% にダウン
+        if (Math.random() < 0.08) {
             let chosenId = Math.floor(Math.random() * 6);
             mouses[chosenId].speedProfile.isSuperAwakeningCandidate = true;
         }
