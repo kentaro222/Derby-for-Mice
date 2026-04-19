@@ -1,4 +1,279 @@
-function setupRaceParams() {
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Derby for Mice</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+        
+        body {
+            font-family: 'Press Start 2P', cursive, sans-serif;
+            background-color: #000;
+            color: #fff;
+            touch-action: manipulation;
+        }
+
+        .mouse-sprite {
+            width: 16px;
+            height: 16px;
+            background-image: url('mouses_run_sheet.png');
+            background-repeat: no-repeat;
+            image-rendering: pixelated;
+            transform-origin: bottom center;
+            transition: transform 0.1s;
+        }
+
+        .cheese-sprite {
+            width: 16px;
+            height: 16px;
+            background-image: url('cheese.png');
+            background-repeat: no-repeat;
+            image-rendering: pixelated;
+            transform: scale(3);
+            transform-origin: bottom center;
+        }
+
+        /* パーティクルアニメーション */
+        @keyframes scatter {
+            0% { transform: translate(0, 0) scale(1); opacity: 1; }
+            100% { transform: translate(var(--dx), var(--dy)) scale(0.2); opacity: 0; }
+        }
+        .particle {
+            position: absolute;
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            pointer-events: none;
+            z-index: 30;
+            animation: scatter var(--duration, 0.6s) cubic-bezier(0.25, 1, 0.5, 1) forwards;
+        }
+    </style>
+</head>
+<body class="py-4 px-2 sm:py-8 sm:px-4 flex justify-center items-start min-h-screen relative">
+
+    <div id="app" class="w-full max-w-2xl bg-black overflow-hidden relative">
+        
+        <div class="absolute top-4 right-4 z-20 flex items-center gap-2 bg-black/80 px-3 py-1 rounded">
+            <span class="text-gray-400 text-[10px] sm:text-xs">COIN:</span>
+            <span id="coin-display" class="text-sm sm:text-base text-yellow-400">---</span>
+        </div>
+
+        <div class="pt-12 pb-2 px-3 sm:px-5 bg-black">
+            <div id="track" class="relative w-full h-[260px] bg-black overflow-hidden">
+                <div id="lane-lines-container" class="absolute inset-0 z-0"></div>
+                <div id="cheese-container" class="absolute right-[10%] top-0 bottom-0 w-[16px] z-0"></div>
+                <div id="mouses-container" class="absolute inset-0 z-10"></div>
+            </div>
+        </div>
+
+        <div id="control-panel" class="p-6 bg-black min-h-[200px] flex flex-col items-center justify-center">
+            </div>
+
+    </div>
+
+    <div id="ad-modal" class="fixed inset-0 z-50 hidden bg-black/95 flex flex-col items-center justify-center p-4">
+        <div class="relative w-full max-w-sm flex flex-col items-center">
+            <div class="relative flex justify-center w-full">
+                <img src="mouse_cm.jpeg" alt="AD" class="max-w-full max-h-[60vh] object-contain border-2 border-gray-700 rounded-sm shadow-[0_0_20px_rgba(0,0,0,0.8)]">
+                <div id="ad-timer" class="absolute top-2 right-2 bg-black/80 text-white text-[10px] px-2 py-1 rounded tracking-widest border border-gray-500">
+                    <span id="ad-countdown">15</span>
+                </div>
+            </div>
+            <button id="btn-close-ad" class="mt-4 w-full py-4 bg-gray-800 text-gray-500 text-[10px] sm:text-xs rounded-sm cursor-not-allowed tracking-widest transition-colors duration-300" disabled>
+                WATCHING AD...
+            </button>
+        </div>
+    </div>
+
+<script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+    import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+    import { getFirestore, doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+    let db, auth;
+    let isDataLoaded = false;
+    const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+    async function initSaveSystem() {
+        try {
+            const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+            if (!firebaseConfig) {
+                isDataLoaded = true;
+                updateCoinsDisplay();
+                return;
+            }
+            
+            const app = initializeApp(firebaseConfig);
+            auth = getAuth(app);
+            db = getFirestore(app);
+
+            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                await signInWithCustomToken(auth, __initial_auth_token);
+            } else {
+                await signInAnonymously(auth);
+            }
+
+            onAuthStateChanged(auth, async (user) => {
+                if (user) {
+                    await loadData(user.uid);
+                    isDataLoaded = true;
+                }
+            });
+        } catch (e) {
+            console.error("Save system init error:", e);
+            isDataLoaded = true;
+            updateCoinsDisplay();
+        }
+    }
+
+    async function loadData(uid) {
+        if (!db) return;
+        try {
+            const docRef = doc(db, 'artifacts', appId, 'users', uid, 'gameData', 'saveData');
+            const docSnap = await getDoc(docRef);
+            if (docSnap.exists()) {
+                const data = docSnap.data();
+                if (typeof data.coins === 'number') {
+                    coins = data.coins;
+                    if (betAmount > coins) betAmount = Math.max(10, coins);
+                }
+            }
+        } catch (e) {
+            console.error("Load error:", e);
+        }
+        updateCoinsDisplay();
+        if (state === 'BETTING') renderControls();
+    }
+
+    async function saveData() {
+        if (!isDataLoaded || !db || !auth || !auth.currentUser) return;
+        try {
+            const docRef = doc(db, 'artifacts', appId, 'users', auth.currentUser.uid, 'gameData', 'saveData');
+            await setDoc(docRef, { coins: coins }, { merge: true });
+        } catch (e) {
+            console.error("Save error:", e);
+        }
+    }
+
+    const badgeColors = ['bg-red-500', 'bg-blue-500', 'bg-yellow-400', 'bg-green-500', 'bg-orange-500', 'bg-pink-500'];
+    const PAYOUT_MULTIPLIER = 5; 
+
+    let coins = 100;
+    let betMouseId = 0;
+    let betAmount = 10;
+    let state = 'BETTING'; 
+    let mouses = [];
+    
+    let lastTime = 0;
+    let animationTimer = 0;
+    let goalX = 0;
+    let isImageLoaded = true;
+    let loopStarted = false;
+    let winner = null;
+    let isReturning = false;
+    
+    // ★追加：1着がゴールしてからのタイマー
+    let raceEndTimer = 0;
+    let isRaceEnding = false;
+    
+    const animSeq = [0, 1, 0, 2];
+    let animIndex = 0;
+    let adInterval = null;
+
+    function init() {
+        try {
+            if (localStorage.getItem('mouseDerbyCoins')) {
+                coins = parseInt(localStorage.getItem('mouseDerbyCoins'), 10);
+                if (isNaN(coins)) coins = 100;
+            }
+        } catch(e){}
+
+        initSaveSystem();
+        
+        const img = new Image();
+        img.onload = () => { isImageLoaded = true; setup(); };
+        img.onerror = () => { isImageLoaded = false; setup(); };
+        img.src = 'mouses_run_sheet.png';
+
+        function setup() {
+            setupMouses(); 
+            setupRaceParams(); 
+            renderControls(); 
+            if (!loopStarted) {
+                loopStarted = true;
+                lastTime = performance.now();
+                requestAnimationFrame(gameLoop);
+            }
+        }
+    }
+
+    function setupMouses() {
+        mouses = [];
+        const container = document.getElementById('mouses-container');
+        container.innerHTML = '';
+        const linesContainer = document.getElementById('lane-lines-container');
+        if (linesContainer) linesContainer.innerHTML = '';
+        const cheeseContainer = document.getElementById('cheese-container');
+        if (cheeseContainer) cheeseContainer.innerHTML = '';
+
+        const laneSpacing = 28; 
+        const trackPaddingTop = 60; 
+
+        for(let i = 0; i < 6; i++) {
+            const baseY = trackPaddingTop + (i * laneSpacing);
+
+            if (linesContainer) {
+                const line = document.createElement('div');
+                line.className = 'absolute left-0 right-0 border-b border-gray-800';
+                line.style.top = `${baseY}px`;
+                linesContainer.appendChild(line);
+            }
+
+            if (cheeseContainer) {
+                const cheese = document.createElement('div');
+                cheese.className = `absolute cheese-sprite ${!isImageLoaded ? 'hidden' : ''}`;
+                cheese.style.top = `${baseY - 16}px`;
+                cheese.style.left = '0px';
+                cheese.style.zIndex = 10 + i * 2;
+                cheeseContainer.appendChild(cheese);
+            }
+
+            mouses.push({
+                id: i,
+                x: 10,
+                y: baseY,
+                frame: 0,
+                tripTimer: 0, 
+                speedProfile: {},
+                returnSpeed: 0
+            });
+
+            const el = document.createElement('div');
+            el.className = 'absolute transition-transform duration-75 ease-linear';
+            el.style.top = `${mouses[i].y - 16}px`;
+            el.style.left = `0px`;
+            el.style.transform = `translateX(10px)`;
+            el.style.zIndex = 10 + i * 2 + 1;
+            el.id = `mouse-el-${i}`;
+
+            const sprite = document.createElement('div');
+            sprite.className = `mouse-sprite ${!isImageLoaded ? 'hidden' : ''}`;
+            sprite.id = `mouse-sprite-${i}`;
+            
+            const fallback = document.createElement('div');
+            fallback.id = `mouse-fallback-${i}`;
+            fallback.className = `w-[16px] h-[16px] rounded flex items-center justify-center transform origin-bottom ${badgeColors[i]} ${isImageLoaded ? 'hidden' : ''}`;
+
+            el.appendChild(sprite);
+            el.appendChild(fallback);
+            container.appendChild(el);
+        }
+        updateMouseStyles();
+    }
+
+    function setupRaceParams() {
         mouses.forEach(m => {
             const baseSpeed = 0.2 + Math.random() * 0.5; 
             
@@ -34,3 +309,429 @@ function setupRaceParams() {
             mouses[chosenId].speedProfile.isSuperAwakeningCandidate = true;
         }
     }
+
+        if (Math.random() < 0.05) {
+            let chosenId = Math.floor(Math.random() * 6);
+            mouses[chosenId].speedProfile.isSuperAwakeningCandidate = true;
+        }
+    }
+
+    function updateMouseStyles() {
+        mouses.forEach(mouse => {
+            const el = document.getElementById(`mouse-el-${mouse.id}`);
+            if(el) {
+                el.style.transform = `translateX(${mouse.x}px)`;
+            }
+            
+            const scaleStr = (state === 'BETTING' && mouse.x > 10) ? 'scale(-3, 3)' : 'scale(3, 3)';
+            const transformStr = mouse.tripTimer > 0 ? `${scaleStr} rotate(90deg)` : scaleStr;
+
+            if(isImageLoaded) {
+                const sprite = document.getElementById(`mouse-sprite-${mouse.id}`);
+                if(sprite) {
+                    const bpX = -(mouse.frame * 16);
+                    const bpY = -(mouse.id * 16);
+                    sprite.style.backgroundPosition = `${bpX}px ${bpY}px`;
+                    sprite.style.transform = transformStr;
+                }
+            } else {
+                const fallback = document.getElementById(`mouse-fallback-${mouse.id}`);
+                if(fallback) {
+                    fallback.style.transform = transformStr;
+                }
+            }
+        });
+    }
+
+    function spawnParticles(x, y, type = 'trip') {
+        const container = document.getElementById('mouses-container');
+        let particleCount = 6;
+        let colors = ['#ffffff', '#e5e7eb']; 
+        let duration = '0.6s';
+
+        if (type === 'awaken') {
+            particleCount = 12;
+            colors = ['#fbbf24', '#f59e0b', '#fef08a', '#ffffff']; 
+        } else if (type === 'goal') {
+            particleCount = 30;
+            colors = ['#ef4444', '#3b82f6', '#facc15', '#22c55e', '#a855f7', '#ffffff']; 
+            duration = '1.0s'; 
+        } else if (type === 'dash') {
+            particleCount = 2; 
+            colors = ['#d1d5db', '#9ca3af', '#6b7280']; 
+            duration = '0.4s'; 
+        } else if (type === 'start') {
+            particleCount = 15;
+            colors = ['#ffffff', '#d1d5db', '#fcd34d']; 
+            duration = '0.7s';
+        }
+
+        for (let i = 0; i < particleCount; i++) {
+            const p = document.createElement('div');
+            p.className = 'particle';
+            p.style.setProperty('--duration', duration);
+            
+            let startX = x + 8;
+            let startY = y - 8;
+            
+            if (type === 'dash' || type === 'start') {
+                startX = x; 
+                startY = y - 2;
+            }
+
+            p.style.left = `${startX}px`; 
+            p.style.top = `${startY}px`;
+            p.style.backgroundColor = colors[Math.floor(Math.random() * colors.length)];
+            
+            let angle = Math.random() * Math.PI * 2;
+            let distance = 15 + Math.random() * 20; 
+
+            if (type === 'goal') {
+                distance = 30 + Math.random() * 60; 
+            } else if (type === 'awaken') {
+                distance = 20 + Math.random() * 30; 
+            } else if (type === 'dash') {
+                angle = Math.PI + (Math.random() - 0.5);
+                distance = 10 + Math.random() * 20;
+            } else if (type === 'start') {
+                angle = Math.PI + (Math.random() - 0.5) * 1.5;
+                distance = 20 + Math.random() * 40;
+            }
+            
+            p.style.setProperty('--dx', `${Math.cos(angle) * distance}px`);
+            p.style.setProperty('--dy', `${Math.sin(angle) * distance}px`);
+            
+            container.appendChild(p);
+            
+            setTimeout(() => {
+                if (p.parentNode) p.remove();
+            }, parseFloat(duration) * 1000);
+        }
+    }
+
+    function updateCoinsDisplay() {
+        document.getElementById('coin-display').innerText = coins;
+    }
+
+    function updateCoins() {
+        updateCoinsDisplay();
+        try { localStorage.setItem('mouseDerbyCoins', coins.toString()); } catch(e){}
+        saveData();
+    }
+
+    async function startRace() {
+        if (coins < betAmount || isReturning) return;
+        
+        coins -= betAmount;
+        updateCoins();
+        
+        const trackWidth = document.getElementById('track').clientWidth;
+        goalX = trackWidth * 0.90 - 48; 
+        winner = null;
+        raceEndTimer = 0; // ★タイマー初期化
+        isRaceEnding = false;
+
+        state = 'READY';
+        mouses.forEach(m => {
+            m.x = 10;
+            m.frame = 0;
+            m.tripTimer = 0;
+            m.speedProfile.isSuperAwakening = false;
+            m.speedProfile.hasTripped = false;
+            m.speedProfile.hasCharged = false;
+        });
+
+        renderControls();
+        updateMouseStyles();
+
+        await new Promise(r => setTimeout(r, 1200));
+
+        state = 'RACING';
+        animIndex = 1;
+        mouses.forEach(m => {
+            m.frame = animSeq[animIndex];
+            spawnParticles(m.x, m.y, 'start');
+        });
+        renderControls();
+    }
+
+    function gameLoop(timestamp) {
+        const delta = timestamp - lastTime;
+        lastTime = timestamp;
+
+        // ★追加: 基準となるHTC Desire 22 proのゴール位置(約260px)から速度倍率を計算
+        // (初回ロード時など、goalXが0の場合のフェイルセーフも含む)
+        const currentGoalX = goalX > 0 ? goalX : (document.getElementById('track').clientWidth * 0.90 - 48);
+        const speedMultiplier = currentGoalX / 260;
+
+        if (state === 'RACING') {
+            let allFinished = true;
+
+            mouses.forEach(mouse => {
+                if (mouse.x < goalX) {
+                    allFinished = false;
+                    let speed = mouse.speedProfile.base;
+                    let progress = mouse.x / goalX; 
+
+                    if (mouse.speedProfile.isTripper && progress > mouse.speedProfile.tripPercent && !mouse.speedProfile.hasTripped) {
+                        mouse.speedProfile.hasTripped = true;
+                        mouse.tripTimer = 40; 
+                        spawnParticles(mouse.x, mouse.y, 'trip');
+                    }
+
+                    if (mouse.speedProfile.isLateCharger && progress > mouse.speedProfile.chargePercent) {
+                        mouse.speedProfile.hasCharged = true;
+                    }
+
+                    if (mouse.speedProfile.isSuperAwakeningCandidate && !mouse.speedProfile.isSuperAwakening && progress > 0.6) {
+                        mouse.speedProfile.isSuperAwakening = true;
+                        spawnParticles(mouse.x, mouse.y, 'awaken'); 
+                    }
+
+                    if (mouse.speedProfile.isSuperAwakening) {
+                        speed = 2.5; 
+                    } else {
+                        if (mouse.tripTimer > 0) {
+                            speed = 0; 
+                            mouse.tripTimer -= delta / 16;
+                        } else if (mouse.speedProfile.hasCharged) {
+                            speed = 1.8; 
+                        } else {
+                            let fluctuation = (Math.random() - 0.5) * mouse.speedProfile.fluctuation;
+                            speed += fluctuation;
+                        }
+                        if (speed < 0.1 && mouse.tripTimer <= 0) speed = 0.1;
+                    }
+
+                    if (speed >= 1.8 && Math.random() < 0.4 && mouse.tripTimer <= 0) {
+                        spawnParticles(mouse.x, mouse.y, 'dash');
+                    }
+
+                    const safeDelta = Math.min(delta, 32); 
+                    // ★変更: speedにspeedMultiplierを掛けて画面サイズに連動させる
+                    mouse.x += (speed * speedMultiplier) * (safeDelta / 16);
+
+                    // ゴール判定
+                    if (mouse.x >= goalX) {
+                        mouse.x = goalX;
+                        if (!winner) {
+                            winner = mouse;
+                            spawnParticles(mouse.x, mouse.y, 'goal'); 
+                            isRaceEnding = true; 
+                        }
+                    }
+                }
+            });
+
+            animationTimer += delta;
+            if (animationTimer > 100) {
+                animIndex = (animIndex + 1) % animSeq.length;
+                mouses.forEach(mouse => {
+                    if (mouse.x < goalX) {
+                        if (mouse.tripTimer > 0) {
+                            mouse.frame = 0;
+                        } else {
+                            mouse.frame = animSeq[animIndex];
+                        }
+                    } else {
+                        mouse.frame = 0; 
+                    }
+                });
+                animationTimer = 0;
+            }
+
+            if (isRaceEnding) {
+                raceEndTimer += delta;
+            }
+
+            if (allFinished || (isRaceEnding && raceEndTimer >= 4000)) {
+                state = 'FINISHED'; 
+                showResult(winner);
+            }
+
+        } else if (state === 'BETTING') {
+            let isMoving = false;
+            mouses.forEach(mouse => {
+                if (mouse.x > 10) {
+                    isMoving = true;
+                    const safeDelta = Math.min(delta, 32);
+                    // ★変更: レース後のスタート地点へ戻る速度にも倍率を掛ける
+                    mouse.x -= (mouse.returnSpeed * speedMultiplier) * (safeDelta / 16);
+                    if (mouse.x <= 10) {
+                        mouse.x = 10;
+                        mouse.frame = 0; 
+                    }
+                }
+            });
+
+            if (isMoving) {
+                animationTimer += delta;
+                if (animationTimer > 150) { 
+                    animIndex = (animIndex + 1) % animSeq.length;
+                    mouses.forEach(mouse => {
+                        if (mouse.x > 10) {
+                            mouse.frame = animSeq[animIndex];
+                        }
+                    });
+                    animationTimer = 0;
+                }
+            } else if (isReturning) {
+                isReturning = false;
+                renderControls();
+            }
+        }
+
+        updateMouseStyles();
+        requestAnimationFrame(gameLoop);
+    }
+
+    function renderControls() {
+        const panel = document.getElementById('control-panel');
+        if (state === 'BETTING') {
+            const canStart = coins >= betAmount && !isReturning;
+            const btnClass = canStart ? 'hover:bg-gray-800 hover:scale-105' : 'opacity-50 cursor-not-allowed';
+            const btnText = isReturning ? 'WAIT...' : 'START';
+
+            panel.innerHTML = `
+                <div id="mouses-grid" class="flex justify-center gap-3 sm:gap-4 mb-6 w-full max-w-xl mx-auto flex-wrap"></div>
+                <div class="flex items-center gap-4 mb-6">
+                    <button id="btn-dec" class="w-10 h-10 bg-gray-900 hover:bg-gray-800 text-sm sm:text-base text-white flex justify-center items-center rounded">-</button>
+                    <span class="text-sm sm:text-base min-w-[80px] text-center">${betAmount}</span>
+                    <button id="btn-inc" class="w-10 h-10 bg-gray-900 hover:bg-gray-800 text-sm sm:text-base text-white flex justify-center items-center rounded">+</button>
+                </div>
+                <button id="btn-start" class="px-10 py-3 bg-gray-900 text-[10px] sm:text-xs text-white rounded transition-transform ${btnClass}">
+                    ${btnText}
+                </button>
+            `;
+
+            const grid = document.getElementById('mouses-grid');
+            mouses.forEach((m, i) => {
+                const btn = document.createElement('button');
+                const isSelected = betMouseId === i;
+                btn.className = `p-3 w-16 h-16 flex items-center justify-center rounded transition-all ${isSelected ? 'bg-gray-800 border border-gray-400 scale-105' : 'bg-transparent hover:bg-gray-900 border border-transparent hover:border-gray-800'}`;
+                
+                btn.innerHTML = `
+                    <span class="inline-block w-6 h-6 ${badgeColors[i]} rounded-sm"></span>
+                `;
+                btn.onclick = () => { betMouseId = i; renderControls(); };
+                grid.appendChild(btn);
+            });
+
+            document.getElementById('btn-dec').onclick = () => { betAmount = Math.max(10, betAmount - 10); renderControls(); };
+            document.getElementById('btn-inc').onclick = () => { betAmount = Math.min(coins, betAmount + 10); renderControls(); };
+            document.getElementById('btn-start').onclick = () => { if(canStart) startRace(); };
+
+        } else if (state === 'READY') {
+            panel.innerHTML = `<h2 class="text-sm sm:text-base text-white animate-bounce tracking-widest mt-4">READY...</h2>`;
+
+        } else if (state === 'RACING') {
+            panel.innerHTML = `
+                <h2 class="text-[10px] sm:text-xs text-gray-500 mb-4 animate-pulse tracking-widest">RACING...</h2>
+                <div class="flex items-center gap-3">
+                    <span class="text-gray-400 text-[10px]">BET:</span>
+                    <span class="inline-block w-6 h-6 rounded-sm ${badgeColors[betMouseId]} shadow-[0_0_10px_rgba(255,255,255,0.2)]"></span>
+                </div>
+            `;
+        }
+    }
+
+    function showAdModal() {
+        const modal = document.getElementById('ad-modal');
+        const closeBtn = document.getElementById('btn-close-ad');
+        const adTimerContainer = document.getElementById('ad-timer');
+        
+        modal.classList.remove('hidden');
+        closeBtn.disabled = true;
+        closeBtn.className = "mt-4 w-full py-4 bg-gray-800 text-gray-500 text-[10px] sm:text-xs rounded-sm cursor-not-allowed tracking-widest transition-colors duration-300";
+        closeBtn.innerText = "WATCHING AD...";
+        
+        let timeLeft = 15;
+        adTimerContainer.innerHTML = `<span id="ad-countdown">${timeLeft}</span>`;
+        adTimerContainer.classList.remove('hidden');
+        
+        if (adInterval) clearInterval(adInterval);
+        
+        adInterval = setInterval(() => {
+            timeLeft--;
+            const countSpan = document.getElementById('ad-countdown');
+            if(countSpan) countSpan.innerText = timeLeft;
+            
+            if (timeLeft <= 0) {
+                clearInterval(adInterval);
+                adTimerContainer.classList.add('hidden');
+                closeBtn.disabled = false;
+                closeBtn.innerText = "CLOSE & GET 100 COIN";
+                closeBtn.className = "mt-4 w-full py-4 bg-yellow-500 text-black text-[10px] sm:text-xs rounded-sm cursor-pointer tracking-widest hover:bg-yellow-400 transition-all duration-300 hover:scale-[1.02]";
+            }
+        }, 1000);
+
+        closeBtn.onclick = () => {
+            if (timeLeft <= 0) {
+                modal.classList.add('hidden');
+                coins = 100;
+                betAmount = 10;
+                updateCoins();
+                resetRace();
+            }
+        };
+    }
+
+    function showResult(winMouse) {
+        const panel = document.getElementById('control-panel');
+        const isWin = winMouse.id === betMouseId;
+        const prize = isWin ? Math.floor(betAmount * PAYOUT_MULTIPLIER) : 0;
+        
+        if (isWin) {
+            coins += prize;
+            updateCoins();
+        }
+
+        panel.innerHTML = `
+            <h2 class="text-sm sm:text-base mb-4 tracking-widest ${isWin ? 'text-yellow-400' : 'text-gray-600'}">
+                ${isWin ? 'WIN!!' : 'LOSE...'}
+            </h2>
+            <div class="flex items-center justify-center gap-4 mb-6">
+                <span class="text-gray-400 text-[10px] sm:text-xs">WINNER:</span>
+                <span class="inline-block w-6 h-6 rounded-sm ${badgeColors[winMouse.id]}"></span>
+            </div>
+            ${isWin ? `<div class="text-[10px] sm:text-xs text-yellow-400 mb-6">+${prize} (x${PAYOUT_MULTIPLIER})</div>` : '<div class="h-6 sm:h-8 mb-6"></div>'}
+            <div id="next-action"></div>
+        `;
+
+        const actionDiv = document.getElementById('next-action');
+        if (coins <= 0) {
+            actionDiv.innerHTML = `<button id="btn-relief" class="px-6 py-3 text-[10px] sm:text-xs text-black bg-yellow-500 hover:bg-yellow-400 rounded tracking-widest">WATCH AD TO CONTINUE</button>`;
+            document.getElementById('btn-relief').onclick = showAdModal;
+        } else {
+            actionDiv.innerHTML = `<button id="btn-next" class="px-8 py-3 text-[10px] sm:text-xs text-white bg-gray-900 hover:bg-gray-800 rounded tracking-widest transition-transform hover:scale-105">NEXT</button>`;
+            document.getElementById('btn-next').onclick = resetRace;
+        }
+    }
+
+    function resetRace() {
+        state = 'BETTING';
+        isReturning = true;
+
+        if (betAmount > coins) betAmount = coins;
+        if (betAmount < 10 && coins >= 10) betAmount = 10;
+        
+        mouses.forEach(m => {
+            m.returnSpeed = Math.random() * 0.4 + 0.6; 
+            m.tripTimer = 0; 
+            m.speedProfile.isSuperAwakening = false;
+        });
+        
+        setupRaceParams(); 
+        updateMouseStyles();
+        renderControls();
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+
+</script>
+</body>
+</html>
