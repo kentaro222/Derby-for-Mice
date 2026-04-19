@@ -274,42 +274,52 @@
     }
 
     function setupRaceParams() {
+        // 1. まず全員の基本ステータスを初期化
         mouses.forEach(m => {
             const baseSpeed = 0.2 + Math.random() * 0.5; 
-            
-            // 転倒する確率（速いマウスの60%）はそのまま
-            const isTripper = baseSpeed > 0.5 && Math.random() < 0.6;
-            const tripPercent = 0.4 + Math.random() * 0.4; 
 
             m.speedProfile = {
                 base: baseSpeed, 
                 fluctuation: 0.5 + Math.random() * 1.0, 
                 
-                isTripper: isTripper,
-                tripPercent: tripPercent,
+                isTripper: false,
+                tripPercent: 0,
                 hasTripped: false, 
 
-                // 一旦全員スパートなしで初期化
                 isLateCharger: false,
                 chargePercent: 0,
                 hasCharged: false
             };
         });
 
-        // ★ レース全体の50%の確率で、1匹だけ「スパート持ち」を登場させる
-        if (Math.random() < 0.50) {
-            const chosenId = Math.floor(Math.random() * 6);
-            const m = mouses[chosenId];
-            
-            // スパートの演出を活かすため、基本スピードをわざと「遅め（0.25〜0.35）」に固定
-            m.speedProfile.base = 0.25 + Math.random() * 0.1;
-            // 転倒とスパートが被ると悲惨なので、スパート持ちは絶対に転倒しないようにする
-            m.speedProfile.isTripper = false; 
+        // 2. 転倒枠の設定（1レースにつき 0〜2匹）
+        // 足の速いマウス（baseSpeedが0.45以上）だけを抽出してシャッフル
+        let fastMice = mouses.filter(m => m.speedProfile.base > 0.45);
+        fastMice.sort(() => Math.random() - 0.5);
+        
+        const numTrippers = Math.floor(Math.random() * 3); // 0, 1, または 2
+        const actualTrippers = Math.min(numTrippers, fastMice.length);
 
-            m.speedProfile.isLateCharger = true;
-            // ★ 発動タイミングを「60%〜85%」の遅めに設定
-            // 早めに発動すれば大逆転、遅すぎると届かない絶妙なバランスを生む
-            m.speedProfile.chargePercent = 0.60 + Math.random() * 0.25; 
+        for (let i = 0; i < actualTrippers; i++) {
+            fastMice[i].speedProfile.isTripper = true;
+            // コケる位置はコースの30%〜80%の間でランダム
+            fastMice[i].speedProfile.tripPercent = 0.3 + Math.random() * 0.5; 
+        }
+
+        // 3. スパート枠の設定（1レースにつき 最大1匹、50%の確率で出現）
+        if (Math.random() < 0.50) {
+            // 転倒枠に選ばれていないマウスの中から1匹選ぶ
+            let eligibleMice = mouses.filter(m => !m.speedProfile.isTripper);
+            
+            if (eligibleMice.length > 0) {
+                const chosenIndex = Math.floor(Math.random() * eligibleMice.length);
+                const m = eligibleMice[chosenIndex];
+
+                // スパートの演出を活かすため、基本スピードをわざと遅め（0.25〜0.35）に固定
+                m.speedProfile.base = 0.25 + Math.random() * 0.1;
+                m.speedProfile.isLateCharger = true;
+                m.speedProfile.chargePercent = 0.60 + Math.random() * 0.25; 
+            }
         }
     }
 
@@ -472,10 +482,9 @@
                     // 転倒の判定
                     if (mouse.speedProfile.isTripper && progress > mouse.speedProfile.tripPercent && !mouse.speedProfile.hasTripped) {
                         mouse.speedProfile.hasTripped = true;
-                        mouse.tripTimer = 40; 
+                        mouse.tripTimer = 100; // ★ココを変更！(元は 40) 約1.6秒間完全に気絶します
                         spawnParticles(mouse.x, mouse.y, 'trip');
                     }
-
                     // スパート発動の瞬間！
                     if (mouse.speedProfile.isLateCharger && progress > mouse.speedProfile.chargePercent && !mouse.speedProfile.hasCharged) {
                         mouse.speedProfile.hasCharged = true;
