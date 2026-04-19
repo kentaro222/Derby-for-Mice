@@ -280,10 +280,6 @@
             // 転倒する確率（速いマウスの60%）はそのまま
             const isTripper = baseSpeed > 0.5 && Math.random() < 0.6;
             const tripPercent = 0.4 + Math.random() * 0.4; 
-            
-            // ★変更箇所：スパート持ちになる確率を 60% → 25% に大幅ダウン
-            const isLateCharger = baseSpeed < 0.4 && Math.random() < 0.25;
-            const chargePercent = 0.4 + Math.random() * 0.25; 
 
             m.speedProfile = {
                 base: baseSpeed, 
@@ -293,19 +289,27 @@
                 tripPercent: tripPercent,
                 hasTripped: false, 
 
-                isLateCharger: isLateCharger,
-                chargePercent: chargePercent,
-                hasCharged: false, 
-
-                isSuperAwakeningCandidate: false,
-                isSuperAwakening: false
+                // 一旦全員スパートなしで初期化
+                isLateCharger: false,
+                chargePercent: 0,
+                hasCharged: false
             };
         });
 
-        // ★変更箇所：超覚醒の確率を 15% → 8% にダウン
-        if (Math.random() < 0.08) {
-            let chosenId = Math.floor(Math.random() * 6);
-            mouses[chosenId].speedProfile.isSuperAwakeningCandidate = true;
+        // ★ レース全体の50%の確率で、1匹だけ「スパート持ち」を登場させる
+        if (Math.random() < 0.50) {
+            const chosenId = Math.floor(Math.random() * 6);
+            const m = mouses[chosenId];
+            
+            // スパートの演出を活かすため、基本スピードをわざと「遅め（0.25〜0.35）」に固定
+            m.speedProfile.base = 0.25 + Math.random() * 0.1;
+            // 転倒とスパートが被ると悲惨なので、スパート持ちは絶対に転倒しないようにする
+            m.speedProfile.isTripper = false; 
+
+            m.speedProfile.isLateCharger = true;
+            // ★ 発動タイミングを「60%〜85%」の遅めに設定
+            // 早めに発動すれば大逆転、遅すぎると届かない絶妙なバランスを生む
+            m.speedProfile.chargePercent = 0.60 + Math.random() * 0.25; 
         }
     }
 
@@ -452,8 +456,7 @@
         const delta = timestamp - lastTime;
         lastTime = timestamp;
 
-        // ★追加: 基準となるHTC Desire 22 proのゴール位置(約260px)から速度倍率を計算
-        // (初回ロード時など、goalXが0の場合のフェイルセーフも含む)
+        // 基準となるHTC Desire 22 proのゴール位置(約260px)から速度倍率を計算
         const currentGoalX = goalX > 0 ? goalX : (document.getElementById('track').clientWidth * 0.90 - 48);
         const speedMultiplier = currentGoalX / 260;
 
@@ -466,42 +469,40 @@
                     let speed = mouse.speedProfile.base;
                     let progress = mouse.x / goalX; 
 
+                    // 転倒の判定
                     if (mouse.speedProfile.isTripper && progress > mouse.speedProfile.tripPercent && !mouse.speedProfile.hasTripped) {
                         mouse.speedProfile.hasTripped = true;
                         mouse.tripTimer = 40; 
                         spawnParticles(mouse.x, mouse.y, 'trip');
                     }
 
-                    if (mouse.speedProfile.isLateCharger && progress > mouse.speedProfile.chargePercent) {
+                    // スパート発動の瞬間！
+                    if (mouse.speedProfile.isLateCharger && progress > mouse.speedProfile.chargePercent && !mouse.speedProfile.hasCharged) {
                         mouse.speedProfile.hasCharged = true;
-                    }
-
-                    if (mouse.speedProfile.isSuperAwakeningCandidate && !mouse.speedProfile.isSuperAwakening && progress > 0.6) {
-                        mouse.speedProfile.isSuperAwakening = true;
+                        // 超覚醒のキラキラエフェクトをスパート発動用に流用して派手に！
                         spawnParticles(mouse.x, mouse.y, 'awaken'); 
                     }
 
-                    if (mouse.speedProfile.isSuperAwakening) {
-                        speed = 2.5; 
+                    // 速度の決定（超覚醒を削除してスッキリ）
+                    if (mouse.tripTimer > 0) {
+                        speed = 0; 
+                        mouse.tripTimer -= delta / 16;
+                    } else if (mouse.speedProfile.hasCharged) {
+                        speed = 2.1; // ★ スパート中のトップスピードを2.1にアップ！
                     } else {
-                        if (mouse.tripTimer > 0) {
-                            speed = 0; 
-                            mouse.tripTimer -= delta / 16;
-                        } else if (mouse.speedProfile.hasCharged) {
-                            speed = 1.8; 
-                        } else {
-                            let fluctuation = (Math.random() - 0.5) * mouse.speedProfile.fluctuation;
-                            speed += fluctuation;
-                        }
-                        if (speed < 0.1 && mouse.tripTimer <= 0) speed = 0.1;
+                        let fluctuation = (Math.random() - 0.5) * mouse.speedProfile.fluctuation;
+                        speed += fluctuation;
                     }
+                    
+                    if (speed < 0.1 && mouse.tripTimer <= 0) speed = 0.1;
 
+                    // 土煙エフェクト
                     if (speed >= 1.8 && Math.random() < 0.4 && mouse.tripTimer <= 0) {
                         spawnParticles(mouse.x, mouse.y, 'dash');
                     }
 
                     const safeDelta = Math.min(delta, 32); 
-                    // ★変更: speedにspeedMultiplierを掛けて画面サイズに連動させる
+                    // 画面サイズに連動させた速度を適用
                     mouse.x += (speed * speedMultiplier) * (safeDelta / 16);
 
                     // ゴール判定
@@ -548,7 +549,6 @@
                 if (mouse.x > 10) {
                     isMoving = true;
                     const safeDelta = Math.min(delta, 32);
-                    // ★変更: レース後のスタート地点へ戻る速度にも倍率を掛ける
                     mouse.x -= (mouse.returnSpeed * speedMultiplier) * (safeDelta / 16);
                     if (mouse.x <= 10) {
                         mouse.x = 10;
