@@ -55,6 +55,10 @@
 
     <div id="app" class="w-full max-w-2xl bg-black overflow-hidden relative">
         
+        <div class="absolute top-4 left-4 z-20 flex items-center justify-center p-1 cursor-pointer group" id="wakelock-toggle" title="画面の消灯を防止">
+            <div id="wakelock-indicator" class="w-3 h-3 sm:w-4 sm:h-4 bg-gray-900 border border-gray-700 rounded-sm group-hover:border-gray-500 transition-colors"></div>
+        </div>
+
         <div class="absolute top-4 right-4 z-20 flex items-center gap-2 bg-black/80 px-3 py-1 rounded">
             <span class="text-gray-400 text-[10px] sm:text-xs">COIN:</span>
             <span id="coin-display" class="text-sm sm:text-base text-yellow-400">---</span>
@@ -160,8 +164,13 @@
     const badgeColors = ['bg-red-500', 'bg-blue-500', 'bg-yellow-400', 'bg-green-500', 'bg-orange-500', 'bg-pink-500'];
     const PAYOUT_MULTIPLIER = 5; 
 
+    let autoNextTimer = 0;
+    let autoStartTimer = 15000; 
+    const AUTO_NEXT_TIME = 3000;  
+    const AUTO_START_TIME = 15000; 
+
     let coins = 100;
-    let betMouseId = 0;
+    let betMouseId = null; 
     let betAmount = 10;
     let state = 'BETTING'; 
     let mouses = [];
@@ -174,13 +183,16 @@
     let winner = null;
     let isReturning = false;
     
-    // ★追加：1着がゴールしてからのタイマー
     let raceEndTimer = 0;
     let isRaceEnding = false;
     
     const animSeq = [0, 1, 0, 2];
     let animIndex = 0;
     let adInterval = null;
+
+    // ★追加：画面消灯防止（Wake Lock）用の変数
+    let wakeLock = null;
+    let isWakeLockRequested = false;
 
     function init() {
         try {
@@ -192,6 +204,9 @@
 
         initSaveSystem();
         
+        // ★追加：ランプのクリックイベント
+        document.getElementById('wakelock-toggle').addEventListener('click', toggleWakeLock);
+
         const img = new Image();
         img.onload = () => { isImageLoaded = true; setup(); };
         img.onerror = () => { isImageLoaded = false; setup(); };
@@ -208,6 +223,68 @@
             }
         }
     }
+
+    // ★追加：画面消灯防止関連の関数
+    async function requestWakeLock() {
+        try {
+            if ('wakeLock' in navigator) {
+                wakeLock = await navigator.wakeLock.request('screen');
+                wakeLock.addEventListener('release', () => {
+                    updateWakeLockIndicator();
+                });
+                isWakeLockRequested = true;
+            } else {
+                console.log('Wake Lock API is not supported by this browser.');
+                // 対応していない場合は一応押したことだけ記録して見た目だけ変える（動作はしない）
+                isWakeLockRequested = true; 
+            }
+        } catch (err) {
+            console.error(`${err.name}, ${err.message}`);
+            isWakeLockRequested = false;
+        }
+        updateWakeLockIndicator();
+    }
+
+    function releaseWakeLock() {
+        isWakeLockRequested = false;
+        if (wakeLock !== null) {
+            wakeLock.release()
+                .then(() => {
+                    wakeLock = null;
+                    updateWakeLockIndicator();
+                });
+        } else {
+            updateWakeLockIndicator();
+        }
+    }
+
+    function toggleWakeLock() {
+        if (isWakeLockRequested) {
+            releaseWakeLock();
+        } else {
+            requestWakeLock();
+        }
+    }
+
+    function updateWakeLockIndicator() {
+        const indicator = document.getElementById('wakelock-indicator');
+        if (!indicator) return;
+        
+        if (isWakeLockRequested) {
+            // ONのとき：緑色に発光
+            indicator.className = "w-3 h-3 sm:w-4 sm:h-4 bg-green-500 border border-green-300 rounded-sm shadow-[0_0_8px_rgba(34,197,94,0.8)] transition-all duration-300";
+        } else {
+            // OFFのとき：暗いグレー
+            indicator.className = "w-3 h-3 sm:w-4 sm:h-4 bg-gray-900 border border-gray-700 rounded-sm group-hover:border-gray-500 transition-all duration-300";
+        }
+    }
+
+    // ★追加：別タブに移動した後に戻ってきたときの再取得処理
+    document.addEventListener('visibilitychange', async () => {
+        if (isWakeLockRequested && document.visibilityState === 'visible') {
+            requestWakeLock();
+        }
+    });
 
     function setupMouses() {
         mouses = [];
@@ -247,7 +324,12 @@
                 frame: 0,
                 tripTimer: 0, 
                 speedProfile: {},
-                returnSpeed: 0
+                returnSpeed: 0,
+                idleState: 'none', 
+                idleTimer: Math.random() * 2000, 
+                idleFrameTimer: 0,
+                jumpOffset: 0,
+                lookDir: 1
             });
 
             const el = document.createElement('div');
@@ -274,22 +356,16 @@
     }
 
     function setupRaceParams() {
-        // 1レース全体で起きる転倒の「上限回数」を設定 (1回か2回)
         mouses.maxTrips = Math.random() < 0.5 ? 1 : 2;
         mouses.currentTrips = 0; 
-        
-        // ★ 追加：先頭が90%を越えた時の「1回限りのスパート判定」が終わったかどうかのフラグ
         mouses.spurtEvaluated = false; 
 
         mouses.forEach(m => {
-            // スパート枠を事前決定しないので、基本速度は全員通常通りバラけさせる
             const baseSpeed = 0.2 + Math.random() * 0.5; 
-
             m.speedProfile = {
                 base: baseSpeed, 
                 fluctuation: 0.5 + Math.random() * 1.0, 
                 hasTripped: false, 
-                
                 isLateCharger: false,
                 hasCharged: false
             };
@@ -303,8 +379,19 @@
                 el.style.transform = `translateX(${mouse.x}px)`;
             }
             
-            const scaleStr = (state === 'BETTING' && mouse.x > 10) ? 'scale(-3, 3)' : 'scale(3, 3)';
-            const transformStr = mouse.tripTimer > 0 ? `${scaleStr} rotate(90deg)` : scaleStr;
+            let scaleX = 3 * mouse.lookDir;
+            if (state === 'BETTING' && mouse.x > 10) {
+                scaleX = -3; 
+            }
+            
+            let translateY = -(mouse.jumpOffset || 0);
+
+            let transformStr = '';
+            if (mouse.tripTimer > 0) {
+                transformStr = `scale(${scaleX}, 3) rotate(90deg)`;
+            } else {
+                transformStr = `translateY(${translateY}px) scale(${scaleX}, 3)`;
+            }
 
             if(isImageLoaded) {
                 const sprite = document.getElementById(`mouse-sprite-${mouse.id}`);
@@ -400,15 +487,19 @@
     }
 
     async function startRace() {
-        if (coins < betAmount || isReturning) return;
+        if (isReturning) return;
+        if (betMouseId !== null && coins < betAmount) return; 
         
-        coins -= betAmount;
-        updateCoins();
+        autoStartTimer = 0; 
+        if (betMouseId !== null) {
+            coins -= betAmount;
+            updateCoins();
+        }
         
         const trackWidth = document.getElementById('track').clientWidth;
         goalX = trackWidth * 0.90 - 48; 
         winner = null;
-        raceEndTimer = 0; // ★タイマー初期化
+        raceEndTimer = 0; 
         isRaceEnding = false;
 
         state = 'READY';
@@ -419,6 +510,10 @@
             m.speedProfile.isSuperAwakening = false;
             m.speedProfile.hasTripped = false;
             m.speedProfile.hasCharged = false;
+            
+            m.idleState = 'none';
+            m.jumpOffset = 0;
+            m.lookDir = 1;
         });
 
         renderControls();
@@ -442,10 +537,24 @@
         const currentGoalX = goalX > 0 ? goalX : (document.getElementById('track').clientWidth * 0.90 - 48);
         const speedMultiplier = currentGoalX / 260;
 
-        if (state === 'RACING') {
+        if (state === 'FINISHED') {
+            if (autoNextTimer > 0) {
+                const prevSec = Math.ceil(autoNextTimer / 1000);
+                autoNextTimer -= delta;
+                const currSec = Math.ceil(autoNextTimer / 1000);
+                
+                if (prevSec !== currSec) {
+                    const btnNext = document.getElementById('btn-next');
+                    if (btnNext) btnNext.innerText = `NEXT (${currSec})`;
+                }
+                
+                if (autoNextTimer <= 0) {
+                    resetRace();
+                }
+            }
+        } else if (state === 'RACING') {
             let allFinished = true;
             
-            // 現在の「先頭（1位）のマウス」を特定する
             let leader = null;
             let maxX = -1;
             mouses.forEach(m => {
@@ -455,20 +564,15 @@
                 }
             });
 
-            // 先頭の進捗（0.0 〜 1.0）
             const leaderProgress = leader ? (leader.x / goalX) : 0;
 
-            // ★ 新ロジック：先頭が90%を越えた瞬間に、1回だけスパート判定を行う！
             if (leaderProgress >= 0.90 && !mouses.spurtEvaluated) {
-                mouses.spurtEvaluated = true; // 判定済みにロック（これ以降は判定しない）
+                mouses.spurtEvaluated = true; 
 
-                // 25%の確率で、誰かが怒涛の追い上げを開始する！
                 if (Math.random() < 0.25) {
-                    // 先頭以外で、今コケていないマウスたちを候補にする
                     let candidates = mouses.filter(m => m !== leader && m.tripTimer <= 0 && !m.speedProfile.hasTripped);
                     
                     if (candidates.length > 0) {
-                        // ランダムに1匹選んで即座にスパート発動！
                         let chosen = candidates[Math.floor(Math.random() * candidates.length)];
                         chosen.speedProfile.isLateCharger = true;
                         chosen.speedProfile.hasCharged = true; 
@@ -483,7 +587,6 @@
                     let speed = mouse.speedProfile.base;
                     let progress = mouse.x / goalX; 
 
-                    // 転倒ロジック：自分が先頭の時だけ低確率でコケる
                     if (mouse === leader && 
                         progress > 0.30 && progress < 0.85 && 
                         mouses.currentTrips < mouses.maxTrips && 
@@ -493,18 +596,15 @@
                         if (Math.random() < 0.008) {
                             mouse.speedProfile.hasTripped = true;
                             mouses.currentTrips++;
-                            // 2匹に抜かれる程度の停止時間
                             mouse.tripTimer = 50 + Math.random() * 20; 
                             spawnParticles(mouse.x, mouse.y, 'trip');
                         }
                     }
 
-                    // 速度計算
                     if (mouse.tripTimer > 0) {
                         speed = 0; 
                         mouse.tripTimer -= delta / 16;
                     } else if (mouse.speedProfile.hasCharged) {
-                        // ★ 発動が遅くなった分、逆転できるようにスピードを 2.1 → 3.0 にアップ！
                         speed = 3.0; 
                     } else {
                         let fluctuation = (Math.random() - 0.5) * mouse.speedProfile.fluctuation;
@@ -524,6 +624,7 @@
                         mouse.x = goalX;
                         if (!winner) {
                             winner = mouse;
+                            winner.idleFrameTimer = 0; 
                             spawnParticles(mouse.x, mouse.y, 'goal'); 
                             isRaceEnding = true; 
                         }
@@ -542,7 +643,7 @@
                             mouse.frame = animSeq[animIndex];
                         }
                     } else {
-                        mouse.frame = 0; 
+                        if (mouse !== winner) mouse.frame = 0; 
                     }
                 });
                 animationTimer = 0;
@@ -555,6 +656,13 @@
             if (allFinished || (isRaceEnding && raceEndTimer >= 4000)) {
                 state = 'FINISHED'; 
                 showResult(winner);
+
+                mouses.forEach(mouse => {
+                    if (mouse.x < goalX && mouse.tripTimer <= 0) {
+                        mouse.tripTimer = 9999; 
+                        spawnParticles(mouse.x, mouse.y, 'trip');
+                    }
+                });
             }
 
         } else if (state === 'BETTING') {
@@ -567,6 +675,43 @@
                     if (mouse.x <= 10) {
                         mouse.x = 10;
                         mouse.frame = 0; 
+                    }
+                } else {
+                    mouse.idleTimer -= delta;
+                    if (mouse.idleTimer <= 0) {
+                        const actions = ['twist', 'warmup_step', 'triple_hop', 'none', 'none', 'none', 'none', 'none'];
+                        mouse.idleState = actions[Math.floor(Math.random() * actions.length)];
+                        mouse.idleTimer = 1500 + Math.random() * 3000; 
+                        mouse.idleFrameTimer = 0;
+                        mouse.frame = 0; 
+                        mouse.jumpOffset = 0;
+                        mouse.lookDir = 1;
+                    }
+
+                    if (mouse.idleState === 'twist') {
+                        mouse.idleFrameTimer += delta;
+                        if (mouse.idleFrameTimer > 800) { 
+                            mouse.lookDir = mouse.lookDir === -1 ? 1 : -1;
+                            mouse.idleFrameTimer = 0;
+                        }
+                    } else if (mouse.idleState === 'warmup_step') {
+                        mouse.idleFrameTimer += delta;
+                        if (mouse.idleFrameTimer > 500) {
+                            mouse.frame = mouse.frame === 0 ? 1 : 0;
+                            mouse.idleFrameTimer = 0;
+                        }
+                        mouse.lookDir = 1;
+                    } else if (mouse.idleState === 'triple_hop') {
+                        mouse.idleFrameTimer += delta;
+                        mouse.lookDir = 1;
+                        if (mouse.idleFrameTimer <= 565) {
+                            mouse.jumpOffset = Math.abs(Math.sin(mouse.idleFrameTimer / 60)) * 10;
+                        } else {
+                            mouse.jumpOffset = 0; 
+                        }
+                    } else {
+                        mouse.lookDir = 1;
+                        mouse.jumpOffset = 0;
                     }
                 }
             });
@@ -584,8 +729,42 @@
                 }
             } else if (isReturning) {
                 isReturning = false;
+                autoStartTimer = AUTO_START_TIME; 
                 renderControls();
+            } else {
+                if (autoStartTimer > 0) {
+                    const prevSec = Math.ceil(autoStartTimer / 1000);
+                    autoStartTimer -= delta;
+                    const currSec = Math.ceil(autoStartTimer / 1000);
+                    
+                    if (prevSec !== currSec) {
+                        const btnStart = document.getElementById('btn-start');
+                        if (btnStart && (betMouseId === null || coins >= betAmount)) {
+                            btnStart.innerText = `AUTO START (${currSec})`;
+                        }
+                    }
+
+                    if (autoStartTimer <= 0) {
+                        if (betMouseId !== null) {
+                            if (betAmount > coins) {
+                                betAmount = Math.max(10, Math.floor(coins / 10) * 10);
+                            }
+                            if (coins < 10) {
+                                betMouseId = null;
+                            }
+                            renderControls();
+                        }
+                        startRace();
+                    }
+                }
             }
+        }
+
+        if ((state === 'RACING' || state === 'FINISHED') && winner) {
+            winner.idleFrameTimer += delta;
+            winner.jumpOffset = Math.abs(Math.sin(winner.idleFrameTimer / 150)) * 12;
+            winner.lookDir = (Math.floor(winner.idleFrameTimer / 400) % 2 === 0) ? 1 : -1;
+            winner.frame = 0; 
         }
 
         updateMouseStyles();
@@ -595,9 +774,13 @@
     function renderControls() {
         const panel = document.getElementById('control-panel');
         if (state === 'BETTING') {
-            const canStart = coins >= betAmount && !isReturning;
+            const canStart = !isReturning && (betMouseId === null || coins >= betAmount);
             const btnClass = canStart ? 'hover:bg-gray-800 hover:scale-105' : 'opacity-50 cursor-not-allowed';
-            const btnText = isReturning ? 'WAIT...' : 'START';
+            
+            let btnText = isReturning ? 'WAIT...' : 'START';
+            if (!isReturning && autoStartTimer > 0) {
+                btnText = `AUTO START (${Math.ceil(autoStartTimer / 1000)})`;
+            }
 
             panel.innerHTML = `
                 <div id="mouses-grid" class="flex justify-center gap-3 sm:gap-4 mb-6 w-full max-w-xl mx-auto flex-wrap"></div>
@@ -620,7 +803,10 @@
                 btn.innerHTML = `
                     <span class="inline-block w-6 h-6 ${badgeColors[i]} rounded-sm"></span>
                 `;
-                btn.onclick = () => { betMouseId = i; renderControls(); };
+                btn.onclick = () => { 
+                    betMouseId = isSelected ? null : i; 
+                    renderControls(); 
+                };
                 grid.appendChild(btn);
             });
 
@@ -636,7 +822,10 @@
                 <h2 class="text-[10px] sm:text-xs text-gray-500 mb-4 animate-pulse tracking-widest">RACING...</h2>
                 <div class="flex items-center gap-3">
                     <span class="text-gray-400 text-[10px]">BET:</span>
-                    <span class="inline-block w-6 h-6 rounded-sm ${badgeColors[betMouseId]} shadow-[0_0_10px_rgba(255,255,255,0.2)]"></span>
+                    ${betMouseId !== null 
+                        ? `<span class="inline-block w-6 h-6 rounded-sm ${badgeColors[betMouseId]} shadow-[0_0_10px_rgba(255,255,255,0.2)]"></span>`
+                        : `<span class="text-[10px] sm:text-xs text-gray-600 tracking-widest">NONE</span>`
+                    }
                 </div>
             `;
         }
@@ -685,32 +874,42 @@
 
     function showResult(winMouse) {
         const panel = document.getElementById('control-panel');
-        const isWin = winMouse.id === betMouseId;
-        const prize = isWin ? Math.floor(betAmount * PAYOUT_MULTIPLIER) : 0;
         
-        if (isWin) {
-            coins += prize;
-            updateCoins();
+        let isWin = false;
+        let prize = 0;
+        
+        if (betMouseId !== null) {
+            isWin = winMouse.id === betMouseId;
+            prize = isWin ? Math.floor(betAmount * PAYOUT_MULTIPLIER) : 0;
+            if (isWin) {
+                coins += prize;
+                updateCoins();
+            }
         }
 
+        const resultText = betMouseId === null ? 'RACE OVER' : (isWin ? 'WIN!!' : 'LOSE...');
+        const resultColor = betMouseId === null ? 'text-gray-400' : (isWin ? 'text-yellow-400' : 'text-gray-600');
+
         panel.innerHTML = `
-            <h2 class="text-sm sm:text-base mb-4 tracking-widest ${isWin ? 'text-yellow-400' : 'text-gray-600'}">
-                ${isWin ? 'WIN!!' : 'LOSE...'}
+            <h2 class="text-sm sm:text-base mb-4 tracking-widest ${resultColor}">
+                ${resultText}
             </h2>
             <div class="flex items-center justify-center gap-4 mb-6">
                 <span class="text-gray-400 text-[10px] sm:text-xs">WINNER:</span>
                 <span class="inline-block w-6 h-6 rounded-sm ${badgeColors[winMouse.id]}"></span>
             </div>
-            ${isWin ? `<div class="text-[10px] sm:text-xs text-yellow-400 mb-6">+${prize} (x${PAYOUT_MULTIPLIER})</div>` : '<div class="h-6 sm:h-8 mb-6"></div>'}
+            ${(betMouseId !== null && isWin) ? `<div class="text-[10px] sm:text-xs text-yellow-400 mb-6">+${prize} (x${PAYOUT_MULTIPLIER})</div>` : '<div class="h-6 sm:h-8 mb-6"></div>'}
             <div id="next-action"></div>
         `;
 
         const actionDiv = document.getElementById('next-action');
         if (coins <= 0) {
+            autoNextTimer = 0; 
             actionDiv.innerHTML = `<button id="btn-relief" class="px-6 py-3 text-[10px] sm:text-xs text-black bg-yellow-500 hover:bg-yellow-400 rounded tracking-widest">WATCH AD TO CONTINUE</button>`;
             document.getElementById('btn-relief').onclick = showAdModal;
         } else {
-            actionDiv.innerHTML = `<button id="btn-next" class="px-8 py-3 text-[10px] sm:text-xs text-white bg-gray-900 hover:bg-gray-800 rounded tracking-widest transition-transform hover:scale-105">NEXT</button>`;
+            autoNextTimer = AUTO_NEXT_TIME; 
+            actionDiv.innerHTML = `<button id="btn-next" class="px-8 py-3 text-[10px] sm:text-xs text-white bg-gray-900 hover:bg-gray-800 rounded tracking-widest transition-transform hover:scale-105">NEXT (${Math.ceil(AUTO_NEXT_TIME/1000)})</button>`;
             document.getElementById('btn-next').onclick = resetRace;
         }
     }
@@ -718,6 +917,7 @@
     function resetRace() {
         state = 'BETTING';
         isReturning = true;
+        betMouseId = null; 
 
         if (betAmount > coins) betAmount = coins;
         if (betAmount < 10 && coins >= 10) betAmount = 10;
@@ -726,6 +926,11 @@
             m.returnSpeed = Math.random() * 0.4 + 0.6; 
             m.tripTimer = 0; 
             m.speedProfile.isSuperAwakening = false;
+            
+            m.idleState = 'none';
+            m.jumpOffset = 0;
+            m.lookDir = 1;
+            m.idleTimer = Math.random() * 2000;
         });
         
         setupRaceParams(); 
